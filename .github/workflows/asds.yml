@@ -1,4 +1,22 @@
-steps:
+name: Build Android AAR (arm64 only)
+
+on:
+  push:
+    tags: ['v*-lx.*'] # Автозапуск при пуше тега релиза (например, v1.13.13-lx.1)
+  workflow_dispatch:  # Позволяет запускать сборку вручную из вкладки Actions
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.13.13-lx.1). Leave empty to use current ref.'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build_android:
+    name: build android (libbox.aar arm64)
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -9,12 +27,11 @@ steps:
           go-version-file: go.mod
           check-latest: true
 
-      # [ИСПРАВЛЕНИЕ]: Откатываем NDK до стабильной LTS-версии (r26d), 
-      # чтобы gomobile мог успешно пройти инициализацию
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
+          # ndk-version: r28 # Закомментировано: NDK r28 вызывает ошибку unsupported API version 16 в gomobile
           ndk-version: r26d
 
       - name: Setup OpenJDK 17
@@ -25,6 +42,7 @@ steps:
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Локально ставим тег, чтобы генератор версии ядра правильно записал её в код
           git tag "$TAG" -f || true
 
       - name: Install gomobile
@@ -38,12 +56,17 @@ steps:
       - name: Build libbox.aar (arm64 only)
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
+          
+          # Легализуем утилиту gobind (исправление для Go 1.24+)
           go get -tool golang.org/x/mobile/cmd/gobind
           go mod tidy
           
+          # Считываем теги из конфига разраба
           TAGS="$(make -f Makefile.lx -s lx-print-tags)"
           echo "Building with tags: $TAGS"
           
+          # Собираем AAR. 
+          # ДОБАВЛЕНО: флаг -checklinkname=0 в ldflags для обхода блокировки приватных функций Go
           gomobile bind -v -a -trimpath \
             -target=android/arm64 \
             -androidapi 21 \
